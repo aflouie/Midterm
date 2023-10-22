@@ -1,28 +1,488 @@
 ---
-title: ""
-author: ""
+title: "Midterm"
+author: "Allison Louie"
 format:
   html:
     embed-resources: true
 ---
 
-## Quarto
+# Introduction
 
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+We are looking to observe in this tobacco use dataset from the CDC National Center for Health Statistics. This looks into the surveys taken from the country to smoking, e-smoking, prevalence of use through demographics, as well as quit attempts. It has sampled from all over the US as well as Guam to see the habits of smoking.
 
-## Running Code
+The interest of this research is to see which of the groups (cigarette vs e-cigarettes vs smokeless tobacco) are more successful in quitting the habit? There is interest in wanting to see if the amount of surveys may impact the results.
 
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+# Methods
 
-```{r}
-1 + 1
-```
-
-You can add options to executable code like this
+The data was collected using surveys from the Behavioral Risk Factor Surveillance System (BRFSS) from 2011 to 2019. The surveys take place over the years in different states (as well as Guam) to ask about smoking habits, what was measured, as well as whether they had succeeded in quitting or not. What was done was the data was cleaned to merely look at the year, location, topics of tobacco use, measures used for tobacco use, their response, the data value in percentage.
 
 ```{r}
-#| echo: false
-2 * 2
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(leaflet)
+library(leaflet.providers)
+tobacco <- read_csv("tobacco.csv")
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+To account for confounds, gender, race, age, and education were used to see if it has an influence on smoking. But it was found that from cleaning up the data by removing any unavailable values in data value and response, the categories of race, age and education are not seeming to impact the relationship.
+
+```{r}
+tobacco_cleaned <- tobacco %>%
+  filter(!is.na(Data_Value) & !is.na(Response) & !is.na(GeoLocation)) %>%
+  select(YEAR, LocationDesc, TopicDesc, MeasureDesc, Response, Data_Value,     Low_Confidence_Limit, High_Confidence_Limit, Gender, Race, Age, Education, GeoLocation)
+tobacco_cleaned$YEAR <- factor(tobacco_cleaned$YEAR)
+tobacco_cleaned$LocationDesc <- factor(tobacco_cleaned$LocationDesc)
+tobacco_cleaned$TopicDesc <- factor(tobacco_cleaned$TopicDesc)
+tobacco_cleaned$MeasureDesc <- factor(tobacco_cleaned$MeasureDesc)
+tobacco_cleaned$Response <- factor(tobacco_cleaned$Response)
+tobacco_cleaned$Data_Value <- as.numeric(tobacco_cleaned$Data_Value)
+tobacco_cleaned$Gender <- factor(tobacco_cleaned$Gender)
+tobacco_cleaned$Race <- factor(tobacco_cleaned$Race)
+tobacco_cleaned$Age <- factor(tobacco_cleaned$Age)
+tobacco_cleaned$Education <- factor(tobacco_cleaned$Education)
+tobacco_cleaned <- tobacco_cleaned %>%
+  mutate(
+    lat = as.character(substring(GeoLocation, 2, regexpr(",", GeoLocation) - 1)),
+    lon = as.character(substring(GeoLocation, regexpr(",", GeoLocation) + 2, nchar(GeoLocation) - 1))
+  )
+```
+
+To also look at the quit attempts that did not have any responses but numerical data to report, we used this to look at the cessation among smokers who smoke on a daily basis. We also tried to see the confidence limits to compare the data values of those who gave up smoking.
+
+```{r}
+quitting_data <- tobacco %>%
+  filter(
+    TopicDesc == "Cessation (Adults)",
+    (MeasureDesc == "Percent of Former Smokers Among Ever Smokers" | MeasureDesc == "Quit Attempt in Past Year Among Every Day Cigarette Smokers")
+  )
+quitting_data <- quitting_data %>%
+  filter(!is.na(Data_Value) & !is.na(Data_Value_Std_Err) & !is.na(Low_Confidence_Limit) & !is.na(High_Confidence_Limit) & !is.na(GeoLocation)) %>%
+  select(
+    YEAR, 
+    LocationDesc, 
+    TopicDesc, 
+    MeasureDesc, 
+    Data_Value, 
+    Data_Value_Std_Err, 
+    Low_Confidence_Limit, 
+    High_Confidence_Limit,
+    Gender,
+    Race,
+    Age,
+    Education,
+    GeoLocation
+  )
+quitting_data <- quitting_data %>%
+  mutate(
+    lat = as.character(substring(GeoLocation, 2, regexpr(",", GeoLocation) - 1)),
+    lon = as.character(substring(GeoLocation, regexpr(",", GeoLocation) + 2, nchar(GeoLocation) - 1))
+  )
+```
+
+It should be noted that there is not much confounding with race, age, or education since they include everything. Gender is the confound that is more concerning.
+
+# Preliminary Results
+
+## Quitting Attempts in Cigarette Smokers
+
+```{r}
+former_smokers <- quitting_data %>%
+  filter(
+    TopicDesc == "Cessation (Adults)",
+    MeasureDesc == "Percent of Former Smokers Among Ever Smokers"
+  )
+percent_former_plot <- ggplot(former_smokers, aes(x = YEAR, y = Data_Value, color = MeasureDesc)) +
+  geom_point() +
+  labs(
+    title = "Temporal Trends in Percent of Former Smokers",
+    x = "Year",
+    y = "Percent of Former Smokers",
+    color = "Measure"
+  )
+percent_former_plot
+ggplot(data = former_smokers, aes(x = Data_Value)) +
+  geom_histogram() +
+  labs(
+    title = "Distribution of Percent of Former Smokers Among Ever Smokers (Cessation Data)",
+    x = "Data Value",
+    y = "Frequency"
+  )
+```
+
+For the percentage of former smokers among those who ever smoked seems to have increased over the years in a seemingly positive relationship. It especially seems to have increased moreso in 2019, where there has been a high percentages.
+
+```{r}
+former_smokers <- quitting_data%>%
+   mutate(
+    lat = as.numeric(lat),
+    lon = as.numeric(lon))
+former_smokers_avg <- former_smokers %>%
+  group_by(LocationDesc) %>%
+  summarize(
+    lat = first(lat),
+    lon = first(lon),
+    Overall_Avg_Data_Value = mean(Data_Value, na.rm = TRUE)
+  )
+color_palette <- colorNumeric(palette = c("red", "blue"), domain = former_smokers_avg$Overall_Avg_Data_Value)
+breaks <- c(min(former_smokers_avg$Overall_Avg_Data_Value), max(former_smokers_avg$Overall_Avg_Data_Value))
+labels <- c("Low", "High")
+
+former_smokers_map <- leaflet(data = former_smokers_avg) %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  addCircleMarkers(
+    lng = ~lon,
+    lat = ~lat,
+    radius = 5,
+    fillOpacity = 0.5,
+    fillColor = ~color_palette(Overall_Avg_Data_Value),
+    color = "white",
+    label = ~paste0(LocationDesc, " Avg Data Value: ", round(Overall_Avg_Data_Value, 2), "%")
+  ) %>%
+addLegend(
+    position = "bottomright",
+    colors = c("red", "blue"),
+    labels = labels,
+    values = breaks,
+    title = "Avg Data Value",
+    opacity = 0.7)
+former_smokers_map
+```
+
+For former smokers among those who were ever smokers, Puerto Rico has the highest percentage and Kentucky as the lowest.
+
+```{r}
+quitting_attempt <- quitting_data %>%
+  filter(
+    TopicDesc == "Cessation (Adults)",
+    MeasureDesc == "Quit Attempt in Past Year Among Every Day Cigarette Smokers"
+  )
+quit_attempts_plot <- ggplot(quitting_attempt, aes(x = YEAR, y = Data_Value, color = MeasureDesc)) +
+  geom_point() +
+  labs(
+    title = "Temporal Trends in Quit Attempts",
+    x = "Year",
+    y = "Quit Attempts",
+    color = "Measure"
+  )
+quit_attempts_plot
+
+mean_data <- quitting_attempt %>%
+  group_by(YEAR) %>%
+  summarize(Mean_Data_Value = mean(Data_Value, na.rm = TRUE))
+kable(mean_data)
+
+ggplot(data = mean_data, aes(x = YEAR, y = Mean_Data_Value)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(
+    title = "Mean Quit Attempt in Past Year Among Every Day Cigarette Smokers Over the Years",
+    x = "Year",
+    y = "Mean Data Value"
+  )
+```
+
+Over the years, it seems that those who manage to quit in the past years on average have been relatively even in percentages. But 2014 seem to have had a higher peak compared to the rest of the years. But the amount seems to have decreased in 2019, so it might be people are having trouble quitting or there are less users of cigarettes around to quit.
+
+```{r}
+quitting_attempt <- quitting_data%>%
+   mutate(
+    lat = as.numeric(lat),
+    lon = as.numeric(lon))
+quitting_attempt_avg <- quitting_attempt %>%
+  group_by(LocationDesc) %>%
+  summarize(
+    lat = first(lat),
+    lon = first(lon),
+    Overall_Avg_Data_Value = mean(Data_Value, na.rm = TRUE)
+  )
+color_palette <- colorNumeric(palette = c("red", "blue"), domain = quitting_attempt_avg$Overall_Avg_Data_Value)
+breaks <- c(min(quitting_attempt_avg$Overall_Avg_Data_Value), max(quitting_attempt_avg$Overall_Avg_Data_Value))
+labels <- c("Low", "High")
+
+quitting_map <- leaflet(data = quitting_attempt_avg) %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  addCircleMarkers(
+    lng = ~lon,
+    lat = ~lat,
+    radius = 5,
+    fillOpacity = 0.5,
+    fillColor = ~color_palette(Overall_Avg_Data_Value),
+    color = "white",
+    label = ~paste0(LocationDesc, " Avg Data Value: ", round(Overall_Avg_Data_Value, 2), "%")
+  ) %>%
+addLegend(
+    position = "bottomright",
+    colors = c("red", "blue"),
+    labels = labels,
+    values = breaks,
+    title = "Avg Data Value",
+    opacity = 0.7)
+quitting_map
+```
+
+Puerto Rico has the highest percentage of those who attempt quitting in the past year. Kentucky has the lowest. It is the same overall for both the percentages of former users and quitting attempts.
+
+## Topics of Surveys
+
+```{r}
+table(tobacco_cleaned$TopicDesc, tobacco_cleaned$Response)
+ggplot(tobacco_cleaned, aes(x = TopicDesc, fill = Response)) +
+  geom_bar() +
+  labs(title = "Relationship Between TopicDesc and Response",
+       x = "TopicDesc",
+       y = "Count")
+```
+
+Between the different categories of cigarette usage, it appears that for those who have stopped more occurs in cigarette and e-cigarette use. There are more of surveys that show there are more seem to quit from cigarette use compared to e-cigarette. It is interesting to see that people do not seem to quit with smokeless tobacco use. Not only that, but the responses for not current only appears for smokeless tobacco use in adults. It makes it interesting to see whether or not "not current" could lead to "former" or it could be taking a break for a while.
+
+```{r}
+ggplot(tobacco_cleaned, aes(x = YEAR, fill = TopicDesc)) +
+  geom_bar(position = "stack") +
+  labs(title = "Former/No Current Response Among Cigarette Use, E-Cigarette Use, and Smokeless Tobacco Use",
+       x = "Year",
+       y = "Count") 
+```
+
+Over the years, it seems that cigarette use has been the larger topic of research in the 8 years of survey collection compared to the rest of them. Smokeless tobacco use does not change in terms of the number of former users, seeming stagnant. Also, quitting e-cigarette use seems to be a more recent and does not seem to be as prevalent as cigarette use and smokeless tobacco use. Former was defined in these surveys as whether or not they use these, which can be assumed as being the same as successfully quitting.
+
+```{r}
+cig_state_data <- tobacco_cleaned %>%
+  filter(Response == "Former", TopicDesc == "Cigarette Use (Adults)") %>%
+  select(LocationDesc, lat, lon, Data_Value)%>%
+   mutate(
+    lat = as.numeric(lat),
+    lon = as.numeric(lon))
+
+cig_state_average <- cig_state_data %>%
+  group_by(LocationDesc) %>%
+  summarize(
+    lat = first(lat),
+    lon = first(lon),
+    Overall_Avg_Data_Value = mean(Data_Value, na.rm = TRUE)
+  )
+
+color_palette <- colorNumeric(palette = c("red", "blue"), domain = cig_state_average$Overall_Avg_Data_Value)
+breaks <- c(min(cig_state_average$Overall_Avg_Data_Value), max(cig_state_average$Overall_Avg_Data_Value))
+labels <- c("Low", "High")
+
+cig_f_map <- leaflet(data = cig_state_average) %>%
+  addTiles()%>%
+  addCircleMarkers(
+    lng = ~lon,  
+    lat = ~lat,  
+    radius = 5,  
+    fillOpacity = 0.5,
+    fillColor = ~color_palette(Overall_Avg_Data_Value),
+    color = "white",
+    label = ~paste0(LocationDesc, " Avg Data Value: ", round(Overall_Avg_Data_Value, 2), "%")
+  ) %>%
+addLegend(
+    position = "bottomright",
+    colors = c("red", "blue"),
+    labels = labels,
+    values = breaks,
+    title = "Avg Data Value",
+    opacity = 0.7)
+cig_f_map
+```
+
+It appears that Maine has the highest percentage (31.54%) on average of those who were former smokers, meaning they must have been able to quit in cigarette smoking compared to the rest.
+
+```{r}
+maine_formerusers_data <- tobacco_cleaned %>%
+  filter(LocationDesc == "Maine", Response == "Former")
+
+ggplot(data = maine_formerusers_data, aes(x = YEAR, y = Data_Value)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = Low_Confidence_Limit, ymax = High_Confidence_Limit), width = 0.2) +
+  labs(
+    title = "Average Tobacco Data for Former Respondents in Maine",
+    x = "Year",
+    y = "Avg Data Value"
+  )
+```
+
+It appears that over the years, there had been more range of values in 2016 and 2017. But 2016 also seemed to have the highest data value of those who became former users in tobacco use. On the other hand, 2017 had the lowest percentage of those who were able to quit as well. Over the years, it does seem that the values are going down---meaning that not many are having success in quitting the use.
+
+```{r}
+ecig_state_data <- tobacco_cleaned %>%
+  filter(Response == "Former", TopicDesc == "E-Cigarette Use (Adults)") %>%
+  select(LocationDesc, lat, lon, Data_Value)%>%
+   mutate(
+    lat = as.numeric(lat),
+    lon = as.numeric(lon))
+
+ecig_state_average <- ecig_state_data %>%
+  group_by(LocationDesc) %>%
+  summarize(
+    lat = first(lat),
+    lon = first(lon),
+    Overall_Avg_Data_Value = mean(Data_Value, na.rm = TRUE)
+  )
+
+color_palette <- colorNumeric(palette = c("red", "blue"), domain = ecig_state_average$Overall_Avg_Data_Value)
+breaks <- c(min(ecig_state_average$Overall_Avg_Data_Value), max(ecig_state_average$Overall_Avg_Data_Value))
+labels <- c("Low", "High")
+
+ecig_f_map <- leaflet(data = ecig_state_average) %>%
+  addTiles()%>%
+  addCircleMarkers(
+    lng = ~lon,  
+    lat = ~lat,  
+    radius = 5,  
+    fillOpacity = 0.8,  
+    fillColor = ~color_palette(Overall_Avg_Data_Value),
+    color = "white",
+    label = ~paste0(LocationDesc, " Avg Data Value: ", round(Overall_Avg_Data_Value, 2), "%")
+  ) %>%
+addLegend(
+    position = "bottomright",
+    colors = c("red", "blue"),
+    labels = labels,
+    values = breaks,
+    title = "Avg Data Value",
+    opacity = 0.7)
+ecig_f_map
+```
+
+On the other hand, Arkansas has the highest percentage on average for e-cigarette users (21.87%) who managed to be former users.
+
+```{r}
+arkansas_formerusers_data <- tobacco_cleaned %>%
+  filter(LocationDesc == "Arkansas", Response == "Former")
+
+ggplot(data = arkansas_formerusers_data, aes(x = YEAR, y = Data_Value)) +
+  geom_point() + 
+  geom_errorbar(aes(ymin = Low_Confidence_Limit, ymax = High_Confidence_Limit), width = 0.2) +
+  labs(
+    title = "Tobacco Data for Former Respondents in Arkansas",
+    x = "Year",
+    y = "Data Value"
+  )
+```
+
+There seems to be a scatter all over the different surveys conducted over the years in Arkansas in terms of people who succeeded in no longer using tobacco. However, it seems that it is becoming relatively increasing after the dip in 2017.
+
+Since we cannot find the "former" users in smokeless tobacco users, we have to look into their responses as to "not currently." Since there is no option of finality of quitting or being former, we have to assume that "not currently" will be used to indicate the smokeless tobacco users' attempt to not be using/trying to quit.
+
+```{r}
+scig_state_data <- tobacco_cleaned %>%
+  filter(Response == "Not Current", TopicDesc == "Smokeless Tobacco Use (Adults)") %>%
+  select(LocationDesc, lat, lon, Data_Value)%>%
+   mutate(
+    lat = as.numeric(lat),
+    lon = as.numeric(lon))
+
+scig_state_average <- scig_state_data %>%
+  group_by(LocationDesc) %>%
+  summarize(
+    lat = first(lat),
+    lon = first(lon),
+    Overall_Avg_Data_Value = mean(Data_Value, na.rm = TRUE)
+  )
+
+color_palette <- colorNumeric(palette = c("red", "blue"), domain = scig_state_average$Overall_Avg_Data_Value)
+breaks <- c(min(scig_state_average$Overall_Avg_Data_Value), max(scig_state_average$Overall_Avg_Data_Value))
+labels <- c("Low", "High")
+
+scig_f_map <- leaflet(data = scig_state_average) %>%
+  addTiles()%>%
+  addCircleMarkers(
+    lng = ~lon,  
+    lat = ~lat,  
+    radius = 5,  
+    fillOpacity = 0.8,  
+    fillColor = ~color_palette(Overall_Avg_Data_Value),
+    color = "white",
+    label = ~paste0(LocationDesc, " Avg Data Value: ", round(Overall_Avg_Data_Value, 2), "%")
+  )%>%
+addLegend(
+    position = "bottomright",
+    colors = c("red", "blue"),
+    labels = labels,
+    values = breaks,
+    title = "Avg Data Value",
+    opacity = 0.7)
+scig_f_map
+```
+
+For smokeless tobacco users, Puerto Rico has the highest percentage of users (99.16%) who are not currently using them.
+
+```{r}
+pr_users_data <- tobacco_cleaned %>%
+  filter(LocationDesc == "Puerto Rico", Response == "Not Current")
+
+ggplot(data = pr_users_data, aes(x = YEAR, y = Data_Value)) +
+  geom_point() + 
+  geom_errorbar(aes(ymin = Low_Confidence_Limit, ymax = High_Confidence_Limit), width = 0.2) +
+  labs(
+    title = "Tobacco Data for Not Current Respondents in Puerto Rico",
+    x = "Year",
+    y = "Data Value"
+  )
+```
+
+For the range of the years, it seems that for Puerto Rico, there has been an increase in the percentage of those who are not currently using for smokeless tobacco users recently (since 2019 has the highest percentage of 99.8%). It has been relatively stagnant over the years overall, but perhaps it is easier to not use as much as the other two groups.
+
+## Confounders
+
+```{r}
+table(quitting_data$TopicDesc, quitting_data$Gender, quitting_data$MeasureDesc)
+ggplot(data = quitting_data, aes(x = Gender, fill = Gender)) +
+  geom_bar() +
+  labs(title = "Gender Distribution within Cessation (Adults) Topic",
+       x = "Gender",
+       y = "Count",
+       fill = "Gender")
+```
+
+The amount of people who were able to are former smokers or those who quit smoking despite being everyday smokers. While looking at the comparison of gender, it seems that they are relatively even between male and female, so gender does not threaten the relationship between cigarette smokers and quitting attempts.
+
+```{r}
+former_response <- tobacco_cleaned[tobacco_cleaned$Response == "Former", ]
+table(tobacco_cleaned$Response, tobacco_cleaned$Gender)
+ggplot(former_response, aes(x = Gender, fill = Gender)) +
+  geom_bar() +
+  labs(title = "Gender Distribution Among Former Smokers",
+       x = "Gender",
+       y = "Count")
+```
+
+Overall, gender does not seem to be a threatening confounder amongst those who quit smoking. The surveys seem to look at all together or they have enough comparisons with female and male, so it does not pose as a problem. Also, it seems that the female and male surveys are evenly matched, so gender is not impacting the results as much.
+
+```{r}
+ggplot(data = tobacco, aes(x = Race, y = Data_Value)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of Data_Value by Race",
+       x = "Race",
+       y = "Data_Value")
+```
+
+In terms of race, it does not seem to pose as a problem of a confounder since they all seem to overlap. Also, it helps that there are surveys that included all races, so the answers seem to be fair.
+
+```{r}
+ggplot(data = tobacco, aes(x = Age, y = Data_Value)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of Data_Value with Confidence Intervals by Age",
+       x = "Age",
+       y = "Data_Value")
+```
+
+Age was also observed to see how it impacted the research of tobacco use. Overall, it appears that there is not much of an impact with age since there are plenty of surveys that observed all ages. Age is not a concern to the data analysis.
+
+```{r}
+cessation_edu <- tobacco %>%
+  filter(TopicDesc == "Cessation (Adults)")
+ggplot(cessation_edu, aes(x = Education, fill = Education)) +
+  geom_bar() +
+  labs(title = "Education Distribution Among Former Smokers",
+       x = "Education",
+       y = "Count")
+```
+
+In education levels, there is no distribution of any difference between education. Therefore, education is not a concerning confounder in trying to understand the relationship between tobacco use and quitting attempt.
+
+# Conclusion
+
+In general, it appears that cigarette use has been increasingly had more people quit as compared to the other groups. It has to do with the extensive amount of research done more with cigarette use compared to the others and therefore have higher results. However, there are still missing pieces of information that need to be explored---like how the surveys defined not currently for the smokeless tobacco users. It is still unsure if it means they have completely quit or if they have stopped at the moment. Or if there are other benefits that smokeless tobacco use has that makes it easier to not need to quit as much as the other groups. Since there are numerous topics and measures for the surveys, it is hard to completely determine if there is much success in quitting for smokeless tobacco users. Not only that, it is a bit hard to determine whether or not they have successfully quit. There does seem to be a demographic relation in terms of who manages to quit or attempt stopping in smoking with the different groups. There should also take into account that many of the surveys had different numbers in their sample size, so the data might have been somewhat skewed in terms of this. However, in terms of confounders like age, gender, or education, it does not seem to pose a threat to the data since the surveys ensure that they get fair representation.
