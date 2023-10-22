@@ -10,7 +10,7 @@ format:
 
 We are looking to observe in this tobacco use dataset from the CDC National Center for Health Statistics. This looks into the surveys taken from the country to smoking, e-smoking, prevalence of use through demographics, as well as quit attempts. It has sampled from all over the US as well as Guam to see the habits of smoking.
 
-The interest of this research is to see which of the groups (cigarette vs e-cigarettes vs smokeless tobacco) are more successful in quitting the habit? There is interest in wanting to see if the amount of surveys may impact the results.
+The interest of this research is to see which of the groups (cigarette vs e-cigarettes vs smokeless tobacco) are more successful in attempting to quit the habit?
 
 # Methods
 
